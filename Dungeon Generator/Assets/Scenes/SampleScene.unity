@@ -476,6 +476,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 95a58ebc1d83deb42b43aa91cc8a976a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::DungeonGen
+  splitHorizontally: 1
 --- !u!1 &1589849595
 GameObject:
   m_ObjectHideFlags: 0
