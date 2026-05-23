@@ -1,28 +1,19 @@
 using UnityEngine;
 
-public enum ConnectionType { Door, Staircase }
-
 public class Door
 {
-    public Room RoomA  { get; }
-    public Room RoomB  { get; }
+    public Room RoomA { get; }
+    public Room RoomB { get; }
     public RectInt Bounds { get; }
-    public ConnectionType Type { get; }
-    public int  Width  { get; } // world-unit width
-    public int Height { get; } // world-unit height
+    public int Width { get; }
+    public int Height { get; }
 
-    public bool IsStaircase => Type == ConnectionType.Staircase;
-
-    public Door(Room roomA, Room roomB, RectInt bounds,
-        ConnectionType type = ConnectionType.Door,
-        int width  = 1,
-        int height = 2)
+    public Door(Room roomA, Room roomB, RectInt bounds, int width = 4, int height = 4)
     {
-        RoomA  = roomA;
-        RoomB  = roomB;
+        RoomA = roomA;
+        RoomB = roomB;
         Bounds = bounds;
-        Type   = type;
-        Width  = width;
+        Width = width;
         Height = height;
     }
 
