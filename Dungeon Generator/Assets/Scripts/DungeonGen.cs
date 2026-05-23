@@ -5,7 +5,7 @@ using UnityEngine;
 public class DungeonGenerator : MonoBehaviour
 {
     [Header("Layout")]
-    [SerializeField] private RectInt dungeonBounds = new RectInt(0, 0, 100, 100);
+    [SerializeField] private RectInt dungeonBounds = new(0, 0, 100, 100);
     [SerializeField] private int minRoomSize = 16;
     [SerializeField] private int maxDepth = 4;
 
@@ -18,8 +18,8 @@ public class DungeonGenerator : MonoBehaviour
     [Header("Settings")]
     [SerializeField] private bool generateOnStart = true;
 
-    private List<Room> _rooms = new List<Room>();
-    private List<Door> _doors = new List<Door>();
+    private List<Room> _rooms = new();
+    private List<Door> _doors = new();
 
     public int CellSize => cellSize;
     public int WallHeight => wallHeight;
@@ -57,9 +57,7 @@ public class DungeonGenerator : MonoBehaviour
             return new List<Room> { leaf };
         }
 
-        bool splitVertically = bounds.width > bounds.height ? true
-                             : bounds.height > bounds.width ? false
-                             : Random.value > 0.5f;
+        bool splitVertically = bounds.width > bounds.height || (bounds.height <= bounds.width && Random.value > 0.5f);
 
         RectInt boundsA, boundsB;
 
@@ -108,8 +106,7 @@ public class DungeonGenerator : MonoBehaviour
                 doorBounds = new RectInt(doorX, wall.y, cellSize, cellSize);
             }
 
-            Door door = new Door(connectedA, connectedB, doorBounds,
-                ConnectionType.Door, doorWidth, doorHeight);
+            Door door = new Door(connectedA, connectedB, doorBounds, doorWidth, doorHeight);
             connectedA.Doors.Add(door);
             connectedB.Doors.Add(door);
             _doors.Add(door);
