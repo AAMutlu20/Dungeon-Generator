@@ -1,12 +1,14 @@
 using System.Collections;
 using System.Collections.Generic;
 using NaughtyAttributes;
+using Unity.AI.Navigation;
 using UnityEngine;
+using UnityEngine.AI;
 
 public class DungeonGenerator : MonoBehaviour
 {
     [Header("Layout")]
-    [SerializeField] private RectInt dungeonBounds = new RectInt(0, 0, 100, 100);
+    [SerializeField] private RectInt dungeonBounds = new(0, 0, 100, 100);
     [SerializeField] private int minRoomSize = 12;
     [SerializeField] private int maxDepth = 5;
 
@@ -22,6 +24,10 @@ public class DungeonGenerator : MonoBehaviour
     [SerializeField] private GameObject doorPrefab;
     [SerializeField] private GameObject floorPrefab;
 
+    [Header("Navigation")]
+    [SerializeField] private NavMeshSurface navMeshSurface;
+    [SerializeField] private Transform player;
+
     [Header("Generation")]
     [SerializeField] private int seed = 0;
     [SerializeField] private bool useRandomSeed = true;
@@ -30,12 +36,12 @@ public class DungeonGenerator : MonoBehaviour
     [Header("Settings")]
     [SerializeField] private bool generateOnStart = true;
 
-    private List<Room> _rooms = new List<Room>();
-    private List<Door> _doors = new List<Door>();
+    private List<Room> _rooms = new();
+    private List<Door> _doors = new();
     private GameObject _dungeonRoot;
 
-    private List<Room> _displayRooms = new List<Room>();
-    private List<Door> _displayDoors = new List<Door>();
+    private List<Room> _displayRooms = new();
+    private List<Door> _displayDoors = new();
     private List<(Room roomA, Room roomB, RectInt doorBounds)> _displayCandidates = new();
 
     public int CellSize => cellSize;
@@ -84,13 +90,16 @@ public class DungeonGenerator : MonoBehaviour
         int[,] tilemap = BuildTilemap();
         SpawnWalls(tilemap);
         SpawnFloor(tilemap);
+
+        BakeNavMesh();
+        PlacePlayer();
+
         RefreshDebug();
 
         Debug.Log($"Done — {_rooms.Count} rooms | {_doors.Count} doors | Seed: {seed}");
     }
 
     // --- Generation steps ---
-
     private IEnumerator StepGenerateRooms()
     {
         Split(dungeonBounds, 0);
@@ -189,13 +198,34 @@ public class DungeonGenerator : MonoBehaviour
         }
     }
 
-    // --- Tilemap ---
+    // --- NavMesh & Player ---
+    [Button]
+    private void BakeNavMesh()
+    {
+        if (navMeshSurface == null) return;
+        navMeshSurface.useGeometry = NavMeshCollectGeometry.PhysicsColliders;
+        navMeshSurface.BuildNavMesh();
+    }
 
+    private void PlacePlayer()
+    {
+        if (player == null || _rooms.Count == 0) return;
+
+        Room spawnRoom = _rooms[Random.Range(0, _rooms.Count)];
+        Vector3 roomCenter = new Vector3(spawnRoom.Center.x, 0, spawnRoom.Center.y);
+
+        if (NavMesh.SamplePosition(roomCenter, out NavMeshHit hit, cellSize * 2f, NavMesh.AllAreas))
+            player.position = hit.position;
+        else
+            player.position = roomCenter;
+    }
+
+    // --- Tilemap ---
     private int[,] BuildTilemap()
     {
         int rows = dungeonBounds.height / cellSize;
         int cols = dungeonBounds.width / cellSize;
-        int[,] tilemap = new int[rows, cols]; // 0=empty 1=wall 2=door
+        int[,] tilemap = new int[rows, cols];
 
         foreach (var room in _rooms)
         {
@@ -228,7 +258,6 @@ public class DungeonGenerator : MonoBehaviour
     }
 
     // --- Spawning ---
-
     private void SpawnWalls(int[,] tilemap)
     {
         int rows = tilemap.GetLength(0);
@@ -243,11 +272,10 @@ public class DungeonGenerator : MonoBehaviour
             {
                 if (tilemap[row, col] == 0) continue;
 
-                // Treat both walls and doors as solid for neighbour checks
-                bool hasLeft  = col > 0            && tilemap[row, col - 1] >= 1;
-                bool hasRight = col < cols - 1      && tilemap[row, col + 1] >= 1;
-                bool hasDown  = row > 0            && tilemap[row - 1, col] >= 1;
-                bool hasUp    = row < rows - 1      && tilemap[row + 1, col] >= 1;
+                bool hasLeft  = col > 0        && tilemap[row, col - 1] >= 1;
+                bool hasRight = col < cols - 1  && tilemap[row, col + 1] >= 1;
+                bool hasDown  = row > 0        && tilemap[row - 1, col] >= 1;
+                bool hasUp    = row < rows - 1  && tilemap[row + 1, col] >= 1;
 
                 Vector3 pos = CellToWorld(row, col);
 
@@ -284,7 +312,6 @@ public class DungeonGenerator : MonoBehaviour
         int rows = tilemap.GetLength(0);
         int cols = tilemap.GetLength(1);
 
-        // BFS flood fill from the centre of the first room
         Room startRoom = _rooms[0];
         int startCol = Mathf.FloorToInt((startRoom.Center.x - dungeonBounds.x) / cellSize);
         int startRow = Mathf.FloorToInt((startRoom.Center.y - dungeonBounds.y) / cellSize);
@@ -295,7 +322,7 @@ public class DungeonGenerator : MonoBehaviour
         floorParent.transform.SetParent(_dungeonRoot.transform);
 
         var visited = new HashSet<Vector2Int>();
-        var queue   = new Queue<Vector2Int>();
+        var queue = new Queue<Vector2Int>();
         var startPos = new Vector2Int(startCol, startRow);
         visited.Add(startPos);
         queue.Enqueue(startPos);
@@ -310,12 +337,18 @@ public class DungeonGenerator : MonoBehaviour
                 Quaternion.identity, floorParent.transform);
             tile.name = $"Floor_{current.x}_{current.y}";
 
+            // BoxCollider lets the NavMesh baker sample floor geometry
+            // without needing CPU read access on the mesh asset
+            var col = tile.AddComponent<BoxCollider>();
+            col.size   = new Vector3(cellSize, 0.1f, cellSize);
+            col.center = Vector3.zero;
+
             foreach (var dir in dirs)
             {
                 var next = current + dir;
                 if (next.x < 0 || next.x >= cols || next.y < 0 || next.y >= rows) continue;
                 if (visited.Contains(next)) continue;
-                if (tilemap[next.y, next.x] == 1) continue; // wall blocks fill
+                if (tilemap[next.y, next.x] == 1) continue;
                 visited.Add(next);
                 queue.Enqueue(next);
             }
@@ -329,7 +362,6 @@ public class DungeonGenerator : MonoBehaviour
     );
 
     // --- Graph helpers ---
-
     private List<(Room, Room, RectInt)> FindAdjacentPairs()
     {
         var candidates = new List<(Room, Room, RectInt)>();
@@ -371,7 +403,7 @@ public class DungeonGenerator : MonoBehaviour
         if (_rooms.Count == 0) return true;
 
         var visited = new HashSet<Room>();
-        var stack   = new Stack<Room>();
+        var stack = new Stack<Room>();
         stack.Push(_rooms[0]);
         visited.Add(_rooms[0]);
 
@@ -404,7 +436,6 @@ public class DungeonGenerator : MonoBehaviour
     }
 
     // --- BSP ---
-
     private List<Room> Split(RectInt bounds, int depth)
     {
         bool tooSmall = bounds.width  < minRoomSize * 2 + cellSize ||
@@ -442,7 +473,6 @@ public class DungeonGenerator : MonoBehaviour
     private int SnapToGrid(int value) => Mathf.RoundToInt((float)value / cellSize) * cellSize;
 
     // --- Debug ---
-
     private void RefreshDebug()
     {
         DebugDrawingBatcher.GetInstance().ClearAllBatchedCalls();
@@ -483,7 +513,6 @@ public class DungeonGenerator : MonoBehaviour
     }
 
     // --- Public accessors ---
-
     public List<Room> GetRooms() => _rooms;
     public List<Door> GetDoors() => _doors;
     public RectInt GetDungeonBounds() => dungeonBounds;
