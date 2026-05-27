@@ -36,6 +36,7 @@ namespace Generation
         [SerializeField] private int seed;
         [SerializeField] private bool useRandomSeed = true;
         [SerializeField] private float stepDelay = 0.5f;
+        [SerializeField] private float floorStepDelay = 0.05f;
 
         [Header("Settings")]
         [SerializeField] private bool generateOnStart = true;
@@ -99,8 +100,8 @@ namespace Generation
             yield return StartCoroutine(RemoveRooms());
 
             var tilemap = BuildTilemap();
-            SpawnWalls(tilemap);
-            SpawnFloor(tilemap);
+            yield return StartCoroutine(SpawnWalls(tilemap));
+            yield return StartCoroutine(SpawnFloor(tilemap));
 
             BakeNavMesh();
             
@@ -297,7 +298,7 @@ namespace Generation
         //If cell is 2 -> door
         //Floors use Breadth First Search from the center of the first room, and from there goes trough all 0 cells and
         //puts floors on them.
-        private void SpawnWalls(int[,] tilemap)
+        private IEnumerator SpawnWalls(int[,] tilemap)
         {
             var rows = tilemap.GetLength(0);
             var cols = tilemap.GetLength(1);
@@ -311,10 +312,10 @@ namespace Generation
                 {
                     if (tilemap[row, col] == 0) continue;
 
-                    var hasLeft  = col > 0        && tilemap[row, col - 1] >= 1;
-                    var hasRight = col < cols - 1  && tilemap[row, col + 1] >= 1;
-                    var hasDown  = row > 0        && tilemap[row - 1, col] >= 1;
-                    var hasUp    = row < rows - 1  && tilemap[row + 1, col] >= 1;
+                    var hasLeft = col > 0 && tilemap[row, col - 1] >= 1;
+                    var hasRight = col < cols - 1 && tilemap[row, col + 1] >= 1;
+                    var hasDown = row > 0 && tilemap[row - 1, col] >= 1;
+                    var hasUp = row < rows - 1 && tilemap[row + 1, col] >= 1;
 
                     var pos = CellToWorld(row, col);
 
@@ -327,7 +328,6 @@ namespace Generation
                     else
                     {
                         var isCorner = (hasLeft || hasRight) && (hasDown || hasUp);
-
                         if (isCorner)
                         {
                             if (columnPrefab)
@@ -340,13 +340,16 @@ namespace Generation
                             Instantiate(wallPrefab, pos, rot, wallParent.transform);
                         }
                     }
+
+                    RefreshDebug();
+                    yield return new WaitForSeconds(stepDelay * 0.05f);
                 }
             }
         }
 
-        private void SpawnFloor(int[,] tilemap)
+        private IEnumerator SpawnFloor(int[,] tilemap)
         {
-            if (!floorPrefab) return;
+            if (!floorPrefab) yield break;
 
             var rows = tilemap.GetLength(0);
             var cols = tilemap.GetLength(1);
@@ -355,7 +358,7 @@ namespace Generation
             var startCol = Mathf.FloorToInt((startRoom.Center.x - dungeonBounds.x) / cellSize);
             var startRow = Mathf.FloorToInt((startRoom.Center.y - dungeonBounds.y) / cellSize);
 
-            if (tilemap[startRow, startCol] == 1) return;
+            if (tilemap[startRow, startCol] == 1) yield break;
 
             var floorParent = new GameObject("Floors");
             floorParent.transform.SetParent(_dungeonRoot.transform);
@@ -376,11 +379,9 @@ namespace Generation
                     Quaternion.identity, floorParent.transform);
                 tile.name = $"Floor_{current.x}_{current.y}";
 
-                //BoxCollider lets the NavMesh baker sample the floor geometry without needing CPU read access on
-                //the mesh asset, just in case the mesh asset doesnt have READ/WRITE enabled.
-                var col = tile.AddComponent<BoxCollider>();
-                col.size = new Vector3(cellSize, 0.1f, cellSize);
-                col.center = Vector3.zero;
+                var boxCol = tile.AddComponent<BoxCollider>();
+                boxCol.size = new Vector3(cellSize, 0.1f, cellSize);
+                boxCol.center = Vector3.zero;
 
                 foreach (var dir in dirs)
                 {
@@ -391,6 +392,9 @@ namespace Generation
                     visited.Add(next);
                     queue.Enqueue(next);
                 }
+
+                RefreshDebug();
+                yield return new WaitForSeconds(floorStepDelay);
             }
         }
 
