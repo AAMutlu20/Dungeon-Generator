@@ -431,7 +431,8 @@ namespace Generation
             while (stack.Count > 0)
             {
                 var current = stack.Pop();
-                foreach (var neighbour in current.Doors.Select(door => door.GetOtherRoom(current)).Where(neighbour => _rooms.Contains(neighbour) && !visited.Contains(neighbour)))
+                foreach (var neighbour in current.Doors.Select(door => door.GetOtherRoom(current))
+                             .Where(neighbour => _rooms.Contains(neighbour) && !visited.Contains(neighbour)))
                 {
                     visited.Add(neighbour);
                     stack.Push(neighbour);
