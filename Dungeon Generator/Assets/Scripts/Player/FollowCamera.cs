@@ -2,7 +2,7 @@ using UnityEngine;
 
 namespace Player
 {
-    public class SmoothFollowCamera : MonoBehaviour
+    public class FollowCamera : MonoBehaviour
     {
         [SerializeField] private Transform target;
         [SerializeField] private float smoothSpeed = 0.125f;
@@ -11,9 +11,9 @@ namespace Player
 
         private void Start()
         {
-            if (target == null)
+            if (!target)
             {
-                Debug.LogError("SmoothFollowCamera: no target assigned.");
+                Debug.LogError("Nope. No target assigned");
                 return;
             }
             _offset = transform.position - target.position;
@@ -21,8 +21,8 @@ namespace Player
 
         private void LateUpdate()
         {
-            if (target == null) return;
-            Vector3 desired = target.position + _offset;
+            if (!target) return;
+            var desired = target.position + _offset;
             transform.position = Vector3.Lerp(transform.position, desired, smoothSpeed);
         }
     }
