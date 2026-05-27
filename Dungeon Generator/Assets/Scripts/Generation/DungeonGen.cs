@@ -80,6 +80,10 @@ namespace Generation
 
             if (_dungeonRoot) DestroyImmediate(_dungeonRoot);
             _dungeonRoot = new GameObject("-- Dungeon Layout --");
+            
+            //I dont like warnings
+            var agent = player ? player.GetComponent<NavMeshAgent>() : null;
+            if (agent) agent.enabled = false;
 
             if (useRandomSeed) seed = Random.Range(0, int.MaxValue);
             Random.InitState(seed);
@@ -99,6 +103,8 @@ namespace Generation
             SpawnFloor(tilemap);
 
             BakeNavMesh();
+            
+            if (agent) agent.enabled = true;
             PlacePlayer();
 
             RefreshDebug();
@@ -226,10 +232,22 @@ namespace Generation
         {
             if (!player || _rooms.Count == 0) return;
 
+            var agent = player.GetComponent<NavMeshAgent>();
+
             var spawnRoom = _rooms[Random.Range(0, _rooms.Count)];
             var roomCenter = new Vector3(spawnRoom.Center.x, 0, spawnRoom.Center.y);
 
-            player.position = NavMesh.SamplePosition(roomCenter, out var hit, cellSize * 2f, NavMesh.AllAreas) ? hit.position : roomCenter;
+            if (NavMesh.SamplePosition(roomCenter, out var hit, cellSize * 2f, NavMesh.AllAreas))
+            {
+                if (agent)
+                    agent.Warp(hit.position);
+                else
+                    player.position = hit.position;
+            }
+            else
+            {
+                player.position = roomCenter;
+            }
         }
 
         //Tilemap
