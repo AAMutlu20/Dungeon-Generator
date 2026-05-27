@@ -237,6 +237,8 @@ namespace Generation
 
             var spawnRoom = _rooms[Random.Range(0, _rooms.Count)];
             var roomCenter = new Vector3(spawnRoom.Center.x, 0, spawnRoom.Center.y);
+            
+            player.position = roomCenter;
 
             if (NavMesh.SamplePosition(roomCenter, out var hit, cellSize * 2f, NavMesh.AllAreas))
             {
@@ -393,9 +395,11 @@ namespace Generation
                     queue.Enqueue(next);
                 }
 
+                if (visited.Count % 60 != 0) continue;
                 RefreshDebug();
                 yield return new WaitForSeconds(floorStepDelay);
             }
+            RefreshDebug();
         }
 
         private Vector3 CellToWorld(int row, int col) => new(
@@ -553,8 +557,14 @@ namespace Generation
                         ), Color.hotPink);
 
                     Gizmos.color = Color.red;
+                    var doorNode = new Vector3(door.Bounds.center.x, 0.05f, door.Bounds.center.y);
+
                     Gizmos.DrawLine(
                         new Vector3(door.RoomA.Center.x, 0.05f, door.RoomA.Center.y),
+                        doorNode);
+
+                    Gizmos.DrawLine(
+                        doorNode,
                         new Vector3(door.RoomB.Center.x, 0.05f, door.RoomB.Center.y));
                 }
             });
