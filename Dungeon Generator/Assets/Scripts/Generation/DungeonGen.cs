@@ -441,10 +441,14 @@ namespace Generation
 
             return visited.Count == _rooms.Count;
         }
-
+        
+        //Find function
+        //Recursive function to find the root (parent) of the object.
         private static int Find(int[] parent, int x) =>
             parent[x] == x ? x : parent[x] = Find(parent, parent[x]);
-
+        
+        //Union function
+        //Uses Find to find the roots of two rooms. If the rooms are already in the same room, then it returns false.
         private static bool Union(int[] parent, int x, int y)
         {
             int px = Find(parent, x), py = Find(parent, y);
