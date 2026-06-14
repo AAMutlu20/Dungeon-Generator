@@ -66,12 +66,15 @@ namespace Generation
             StopAllCoroutines();
             StartCoroutine(GenerateDungeonCoroutine());
         }
-        
+
         //Dungeon Gen Coroutine
         //Pretty self-explanatory, the coroutine starts by clearing the previous dungeon, checks and creates a root obj
         //and then fires all other methods one after another to generate a new dungeon.
+        // ReSharper disable Unity.PerformanceAnalysis
         private IEnumerator GenerateDungeonCoroutine()
         {
+            var startTime = Time.realtimeSinceStartup;
+
             _rooms.Clear();
             _doors.Clear();
             _displayRooms.Clear();
@@ -81,7 +84,7 @@ namespace Generation
 
             if (_dungeonRoot) DestroyImmediate(_dungeonRoot);
             _dungeonRoot = new GameObject("-- Dungeon Layout --");
-            
+
             //I dont like warnings
             var agent = player ? player.GetComponent<NavMeshAgent>() : null;
             if (agent) agent.enabled = false;
@@ -89,28 +92,70 @@ namespace Generation
             if (useRandomSeed) seed = Random.Range(0, int.MaxValue);
             Random.InitState(seed);
 
+            Debug.Log($"Gen Started with seed: {seed}");
+
+            //Rooms
+            Debug.Log("Step 1: Splitting rooms with BSP");
             yield return StartCoroutine(GenerateRooms());
+            Debug.Log($"Step 1 done: {_rooms.Count} rooms split");
 
+            //Candidates
+            Debug.Log("Step 2: Find adjacent room pairs");
             var candidates = FindAdjacentPairs();
+            Debug.Log($"Step 2 done: Found {candidates.Count} valid candidates");
             yield return StartCoroutine(ShowCandidates(candidates));
+
+            //Spanning Tree
+            Debug.Log("Step 3: Build the spanning tree with Union-Find");
             yield return StartCoroutine(BuildSpanningTree(candidates));
+            Debug.Log($"Step 3 done: {_doors.Count} doors placed (expected num: {_rooms.Count - 1})");
 
-            Debug.Log($"Connectivity: {(IsFullyConnected() ? "pass" : "fail")}");
+            var connected = IsFullyConnected();
+            Debug.Log($"Connectivity check → {(connected ? "<color=green>PASS</color>" : "<color=red>FAIL</color>")} " +
+                      $"({_rooms.Count} rooms reachable)");
 
+            //Room Removal
+            var roomsBeforeRemoval = _rooms.Count;
+            var doorsBeforeRemoval = _doors.Count;
+            Debug.Log($"Step 4: Removing {deletedRoomsPercentage}% of smallest rooms " +
+                      $"(target is: {Mathf.CeilToInt(_rooms.Count * (deletedRoomsPercentage / 100f))} rooms)");
             yield return StartCoroutine(RemoveRooms());
+            Debug.Log($"Step 4 done: removed {roomsBeforeRemoval - _rooms.Count} rooms, " +
+                      $"{doorsBeforeRemoval - _doors.Count} doors | " +
+                      $"remaining: {_rooms.Count} rooms, {_doors.Count} doors");
 
+            //Tilemap & Walls
+            Debug.Log("Step 5: Build tilemap & spaw geometry");
             var tilemap = BuildTilemap();
+            var wallCells = 0;
+            var doorCells = 0;
+            for (var row = 0; row < tilemap.GetLength(0); row++)
+                for (var col = 0; col < tilemap.GetLength(1); col++)
+                {
+                    if (tilemap[row, col] == 1) wallCells++;
+                    else if (tilemap[row, col] == 2) doorCells++;
+                }
+            Debug.Log($"Step 5 done: Tilemap: {tilemap.GetLength(1)}x{tilemap.GetLength(0)} grid | " +
+                      $"{wallCells} wall cells & {doorCells} door cells");
+
             yield return StartCoroutine(SpawnWalls(tilemap));
+
+            //Floor
+            Debug.Log("Step 6: Gen floors with flood fill");
             yield return StartCoroutine(SpawnFloor(tilemap));
 
+            //Navmesh & Player
+            Debug.Log("Bake NavMesh");
             BakeNavMesh();
-            
-            if (agent) agent.enabled = true;
             PlacePlayer();
+            if (player)
+                Debug.Log($"Player spawned at {player.position}");
 
             RefreshDebug();
 
-            Debug.Log($"Genned {_rooms.Count} rooms | {_doors.Count} doors | Seed: {seed}");
+            var elapsed = Time.realtimeSinceStartup - startTime;
+            Debug.Log($"Generation complete in {elapsed:F2}s | " +
+                      $"{_rooms.Count} rooms | {_doors.Count} doors | Seed: {seed}");
         }
 
         //Generation steps
@@ -124,7 +169,7 @@ namespace Generation
                 yield return new WaitForSeconds(stepDelay);
             }
         }
-        
+
         private IEnumerator ShowCandidates(List<(Room, Room, RectInt)> candidates)
         {
             foreach (var candidate in candidates)
@@ -136,7 +181,7 @@ namespace Generation
             yield return new WaitForSeconds(stepDelay);
             _displayCandidates.Clear();
         }
-        
+
         //RandomSpanningTree
         //Creates random spanning tree using Union-Find. And what Union-Find does is it shuffles the candidate list,
         //checks if each room pair is already connected and if not, it merges them and creates a door. This ensures
@@ -148,6 +193,7 @@ namespace Generation
                 var j = Random.Range(0, i + 1);
                 (candidates[i], candidates[j]) = (candidates[j], candidates[i]);
             }
+            Debug.Log($"Candidate list shuffled {candidates.Count} pairs");
 
             var roomIndex = new Dictionary<Room, int>();
             for (var i = 0; i < _rooms.Count; i++) roomIndex[_rooms[i]] = i;
@@ -155,18 +201,24 @@ namespace Generation
             var parent = new int[_rooms.Count];
             for (var i = 0; i < parent.Length; i++) parent[i] = i;
 
+            var processed = 0;
             foreach (var (roomA, roomB, doorBounds) in candidates)
             {
                 if (!Union(parent, roomIndex[roomA], roomIndex[roomB])) continue;
+
                 var door = new Door(roomA, roomB, doorBounds, doorWidth, doorHeight);
                 roomA.Doors.Add(door);
                 roomB.Doors.Add(door);
                 _doors.Add(door);
                 _displayDoors.Add(door);
+                processed++;
+                Debug.Log($"Door {processed} placed between rooms at " +
+                          $"{roomA.Center} & {roomB.Center} | doorBounds: {doorBounds}");
                 RefreshDebug();
                 yield return new WaitForSeconds(stepDelay);
             }
         }
+
         //RemoveRooms
         //Used to delete a portion of the smallest rooms. I even exposed the deletion percentage for fun and to check
         //if my function runs without errors.
@@ -179,6 +231,7 @@ namespace Generation
             sorted.Sort((a, b) => (a.Bounds.width * a.Bounds.height).CompareTo(b.Bounds.width * b.Bounds.height));
 
             var removed = 0;
+            var skipped = 0;
             foreach (var room in sorted)
             {
                 if (removed >= removeCount) break;
@@ -201,9 +254,13 @@ namespace Generation
                 if (IsFullyConnected())
                 {
                     removed++;
+                    Debug.Log($"Removed room at {room.Center} |" +
+                              $" with size: {room.Bounds.width}x{room.Bounds.height} | " +
+                              $"removed {removed}/{removeCount}");
                 }
                 else
                 {
+                    skipped++;
                     _rooms.Add(room);
                     _displayRooms.Add(room);
                     foreach (var door in backedUpDoors)
@@ -213,9 +270,13 @@ namespace Generation
                         _displayDoors.Add(door);
                     }
                     room.Doors.AddRange(backedUpDoors);
+                    Debug.Log($"Skipped removal of room at {room.Center} " +
+                              $"it would disconnect the dungeon (skipped: {skipped})");
                     RefreshDebug();
                 }
             }
+
+            Debug.Log($"Removal pass done: removed: {removed} | skipped: {skipped}");
         }
 
         //NavMesh
@@ -225,8 +286,9 @@ namespace Generation
             if (!navMeshSurface) return;
             navMeshSurface.useGeometry = NavMeshCollectGeometry.PhysicsColliders;
             navMeshSurface.BuildNavMesh();
+            Debug.Log("NavMesh baked");
         }
-        
+
         //PlayerSpawn
         //Tries to spawn the player in a random room location, if it fails it puts the player in the room center
         private void PlacePlayer()
@@ -237,20 +299,13 @@ namespace Generation
 
             var spawnRoom = _rooms[Random.Range(0, _rooms.Count)];
             var roomCenter = new Vector3(spawnRoom.Center.x, 0, spawnRoom.Center.y);
-            
-            player.position = roomCenter;
 
-            if (NavMesh.SamplePosition(roomCenter, out var hit, cellSize * 2f, NavMesh.AllAreas))
-            {
-                if (agent)
-                    agent.Warp(hit.position);
-                else
-                    player.position = hit.position;
-            }
-            else
-            {
-                player.position = roomCenter;
-            }
+            player.position = NavMesh.SamplePosition(roomCenter, out var hit, cellSize * 2f, NavMesh.AllAreas)
+                ? hit.position
+                : roomCenter;
+
+            Debug.Log($"Player spawned in room at {spawnRoom.Center} with world pos {player.position}");
+            if (agent) agent.enabled = true;
         }
 
         //Tilemap
@@ -259,7 +314,7 @@ namespace Generation
         private int[,] BuildTilemap()
         {
             var rows = dungeonBounds.height / cellSize;
-            var cols = dungeonBounds.width / cellSize;
+            var cols = dungeonBounds.width  / cellSize;
             var tilemap = new int[rows, cols];
 
             foreach (var room in _rooms)
@@ -268,6 +323,7 @@ namespace Generation
                 var maxCol = (room.Bounds.x + room.Bounds.width - dungeonBounds.x) / cellSize - 1;
                 var minRow = (room.Bounds.y - dungeonBounds.y) / cellSize;
                 var maxRow = (room.Bounds.y + room.Bounds.height - dungeonBounds.y) / cellSize - 1;
+
 
                 for (var col = minCol; col <= maxCol; col++)
                 {
@@ -300,6 +356,7 @@ namespace Generation
         //If cell is 2 -> door
         //Floors use Breadth First Search from the center of the first room, and from there goes trough all 0 cells and
         //puts floors on them.
+        // ReSharper disable Unity.PerformanceAnalysis
         private IEnumerator SpawnWalls(int[,] tilemap)
         {
             var rows = tilemap.GetLength(0);
@@ -307,6 +364,10 @@ namespace Generation
 
             var wallParent = new GameObject("Walls");
             wallParent.transform.SetParent(_dungeonRoot.transform);
+
+            var wallCount = 0;
+            var doorCount = 0;
+            var cornerCount = 0;
 
             for (var row = 0; row < rows; row++)
             {
@@ -326,6 +387,7 @@ namespace Generation
                         if (!doorPrefab) continue;
                         var rot = (hasLeft || hasRight) ? Quaternion.identity : Quaternion.Euler(0, 90, 0);
                         Instantiate(doorPrefab, pos, rot, wallParent.transform);
+                        doorCount++;
                     }
                     else
                     {
@@ -333,20 +395,26 @@ namespace Generation
                         if (isCorner)
                         {
                             if (columnPrefab)
+                            {
                                 Instantiate(columnPrefab, pos, Quaternion.identity, wallParent.transform);
+                                cornerCount++;
+                            }
                         }
                         else
                         {
                             if (!wallPrefab) continue;
                             var rot = (hasLeft || hasRight) ? Quaternion.identity : Quaternion.Euler(0, 90, 0);
                             Instantiate(wallPrefab, pos, rot, wallParent.transform);
+                            wallCount++;
                         }
                     }
 
                     RefreshDebug();
-                    yield return new WaitForSeconds(stepDelay * 0.05f);
+                    yield return new WaitForSeconds(stepDelay * 0.01f);
                 }
             }
+
+            Debug.Log($"Geometry spawned: {wallCount} walls | {cornerCount} columns | {doorCount} doors");
         }
 
         private IEnumerator SpawnFloor(int[,] tilemap)
@@ -360,7 +428,13 @@ namespace Generation
             var startCol = Mathf.FloorToInt((startRoom.Center.x - dungeonBounds.x) / cellSize);
             var startRow = Mathf.FloorToInt((startRoom.Center.y - dungeonBounds.y) / cellSize);
 
-            if (tilemap[startRow, startCol] == 1) yield break;
+            if (tilemap[startRow, startCol] == 1)
+            {
+                Debug.LogWarning("Floor gen start cell is a wall, stopping");
+                yield break;
+            }
+
+            Debug.Log($"Floor gen starting at grid [{startCol}, {startRow}]");
 
             var floorParent = new GameObject("Floors");
             floorParent.transform.SetParent(_dungeonRoot.transform);
@@ -399,6 +473,8 @@ namespace Generation
                 RefreshDebug();
                 yield return new WaitForSeconds(floorStepDelay);
             }
+
+            Debug.Log($"Floor gen complete: {visited.Count} floor tiles placed");
             RefreshDebug();
         }
 
@@ -421,7 +497,7 @@ namespace Generation
                     var rB = _rooms[j];
                     var wall = AlgorithmsUtils.Intersect(rA.Bounds, rB.Bounds);
 
-                    var verticalWall   = wall.width  == cellSize && wall.height >= cellSize * 5;
+                    var verticalWall = wall.width  == cellSize && wall.height >= cellSize * 5;
                     var horizontalWall = wall.height == cellSize && wall.width  >= cellSize * 5;
 
                     if (!verticalWall && !horizontalWall) continue;
@@ -442,13 +518,14 @@ namespace Generation
             }
             return candidates;
         }
-        
+
         //Depth First Search check.
         //Works by checking door connections.
         private bool IsFullyConnected()
         {
             if (_rooms.Count == 0) return true;
 
+            var roomSet = new HashSet<Room>(_rooms);
             var visited = new HashSet<Room>();
             var stack = new Stack<Room>();
             stack.Push(_rooms[0]);
@@ -458,7 +535,7 @@ namespace Generation
             {
                 var current = stack.Pop();
                 foreach (var neighbour in current.Doors.Select(door => door.GetOtherRoom(current))
-                             .Where(neighbour => _rooms.Contains(neighbour) && !visited.Contains(neighbour)))
+                             .Where(neighbour => roomSet.Contains(neighbour) && !visited.Contains(neighbour)))
                 {
                     visited.Add(neighbour);
                     stack.Push(neighbour);
@@ -467,12 +544,12 @@ namespace Generation
 
             return visited.Count == _rooms.Count;
         }
-        
+
         //Find function
         //Recursive function to find the root (parent) of the object.
         private static int Find(int[] parent, int x) =>
             parent[x] == x ? x : parent[x] = Find(parent, parent[x]);
-        
+
         //Union function
         //Uses Find to find the roots of two rooms. If the rooms are already in the same room, then it returns false.
         private static bool Union(int[] parent, int x, int y)
@@ -498,19 +575,22 @@ namespace Generation
                 return new List<Room> { leaf };
             }
 
-            var splitVertically = bounds.width > bounds.height || (bounds.height <= bounds.width && Random.value > 0.5f);
+            var splitVertically = bounds.width > bounds.height ||
+                                  (bounds.height <= bounds.width && Random.value > 0.5f);
 
             RectInt boundsA, boundsB;
 
             if (splitVertically)
             {
-                var splitX = SnapToGrid(Random.Range(bounds.x + minRoomSize, bounds.x + bounds.width - minRoomSize));
+                var splitX = SnapToGrid(Random.Range(bounds.x + minRoomSize,
+                                                     bounds.x + bounds.width - minRoomSize));
                 boundsA = new RectInt(bounds.x, bounds.y, splitX - bounds.x + cellSize, bounds.height);
                 boundsB = new RectInt(splitX, bounds.y, bounds.x + bounds.width - splitX, bounds.height);
             }
             else
             {
-                var splitY = SnapToGrid(Random.Range(bounds.y + minRoomSize, bounds.y + bounds.height - minRoomSize));
+                var splitY = SnapToGrid(Random.Range(bounds.y + minRoomSize,
+                                                     bounds.y + bounds.height - minRoomSize));
                 boundsA = new RectInt(bounds.x, bounds.y, bounds.width, splitY - bounds.y + cellSize);
                 boundsB = new RectInt(bounds.x, splitY, bounds.width, bounds.y + bounds.height - splitY);
             }
@@ -519,12 +599,13 @@ namespace Generation
             all.AddRange(Split(boundsB, depth + 1));
             return all;
         }
-        
+
         //Makes sure everything is aligned by rounding any integer to the nearest multiple of cellSize.
         private int SnapToGrid(int value) => Mathf.RoundToInt((float)value / cellSize) * cellSize;
 
-        //Debug view
-        //Colours that show during generation.
+        /// <summary>
+        /// Debug view: Colours that show during generation.
+        /// </summary>
         private void RefreshDebug()
         {
             DebugDrawingBatcher.GetInstance().ClearAllBatchedCalls();
@@ -570,7 +651,7 @@ namespace Generation
             });
         }
 
-        //Public accessors
+        //Public accessors (don't do anything, but are good to have, because encapsulation)
         public List<Room> GetRooms() => _rooms;
         public List<Door> GetDoors() => _doors;
         public RectInt GetDungeonBounds() => dungeonBounds;
