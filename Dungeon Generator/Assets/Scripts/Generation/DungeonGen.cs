@@ -54,13 +54,14 @@ namespace Generation
         public int DoorWidth => doorWidth;
         public int DoorHeight => doorHeight;
         public int Seed => seed;
-
+        
         private void Start()
         {
             if (generateOnStart) GenerateDungeon();
         }
 
         [Button]
+        //Speed is O(1)
         private void GenerateDungeon()
         {
             StopAllCoroutines();
@@ -70,6 +71,7 @@ namespace Generation
         //Dungeon Gen Coroutine
         //Pretty self-explanatory, the coroutine starts by clearing the previous dungeon, checks and creates a root obj
         //and then fires all other methods one after another to generate a new dungeon.
+        //Speed is O(n)
         // ReSharper disable Unity.PerformanceAnalysis
         private IEnumerator GenerateDungeonCoroutine()
         {
@@ -159,6 +161,7 @@ namespace Generation
         }
 
         //Generation steps
+        //Speed is O(n)
         private IEnumerator GenerateRooms()
         {
             Split(dungeonBounds, 0);
@@ -169,7 +172,8 @@ namespace Generation
                 yield return new WaitForSeconds(stepDelay);
             }
         }
-
+        
+        //Speed is O(n)
         private IEnumerator ShowCandidates(List<(Room, Room, RectInt)> candidates)
         {
             foreach (var candidate in candidates)
@@ -186,6 +190,7 @@ namespace Generation
         //Creates random spanning tree using Union-Find. And what Union-Find does is it shuffles the candidate list,
         //checks if each room pair is already connected and if not, it merges them and creates a door. This ensures
         //that every room is fully reachable.
+        //Speed is O(n log n), because of the path compression in Find.
         private IEnumerator BuildSpanningTree(List<(Room roomA, Room roomB, RectInt doorBounds)> candidates)
         {
             for (var i = candidates.Count - 1; i > 0; i--)
@@ -224,6 +229,7 @@ namespace Generation
         //if my function runs without errors.
         //Essentially it stars by sorting all rooms ascending by size. Then it tries to remove the first (smallest)
         //room and checks by using Depth First Search if AFTER the deletion, all rooms in the dungeon are reachable.
+        //Speed is O(n²)
         private IEnumerator RemoveRooms()
         {
             var removeCount = Mathf.CeilToInt(_rooms.Count * (deletedRoomsPercentage / 100f));
@@ -280,6 +286,7 @@ namespace Generation
         }
 
         //NavMesh
+        //Speed is O(n)
         [Button]
         private void BakeNavMesh()
         {
@@ -291,6 +298,7 @@ namespace Generation
 
         //PlayerSpawn
         //Tries to spawn the player in a random room location, if it fails it puts the player in the room center
+        //Speed is O(1)
         private void PlacePlayer()
         {
             if (!player || _rooms.Count == 0) return;
@@ -311,6 +319,7 @@ namespace Generation
         //Tilemap
         //Converts the nice looking room/door graph into a 2D integer grid, where 0 = empty, 1 = wall and 2 = door.
         //Walls are put at the perimeter of the room, leaving the middle empty. Doors overwrite any valid wall cell.
+        //Speed is O(n)
         private int[,] BuildTilemap()
         {
             var rows = dungeonBounds.height / cellSize;
@@ -357,7 +366,7 @@ namespace Generation
         //Floors use Breadth First Search from the center of the first room, and from there goes trough all 0 cells and
         //puts floors on them.
         // ReSharper disable Unity.PerformanceAnalysis
-        private IEnumerator SpawnWalls(int[,] tilemap)
+        private IEnumerator SpawnWalls(int[,] tilemap) //Speed is O(n)
         {
             var rows = tilemap.GetLength(0);
             var cols = tilemap.GetLength(1);
@@ -416,7 +425,8 @@ namespace Generation
 
             Debug.Log($"Geometry spawned: {wallCount} walls | {cornerCount} columns | {doorCount} doors");
         }
-
+        
+        //Speed is O(n)
         private IEnumerator SpawnFloor(int[,] tilemap)
         {
             if (!floorPrefab) yield break;
@@ -477,7 +487,8 @@ namespace Generation
             Debug.Log($"Floor gen complete: {visited.Count} floor tiles placed");
             RefreshDebug();
         }
-
+        
+        //Speed is O(1)
         private Vector3 CellToWorld(int row, int col) => new(
             dungeonBounds.x + col * cellSize + cellSize * 0.5f,
             0,
@@ -485,6 +496,7 @@ namespace Generation
         );
 
         //Graph helpers
+        //Speed is O(n²), nested loop.
         private List<(Room, Room, RectInt)> FindAdjacentPairs()
         {
             var candidates = new List<(Room, Room, RectInt)>();
@@ -521,6 +533,7 @@ namespace Generation
 
         //Depth First Search check.
         //Works by checking door connections.
+        //Speed is O(n),
         private bool IsFullyConnected()
         {
             if (_rooms.Count == 0) return true;
@@ -547,11 +560,13 @@ namespace Generation
 
         //Find function
         //Recursive function to find the root (parent) of the object.
+        //Speed is O(1), because of path compression.
         private static int Find(int[] parent, int x) =>
             parent[x] == x ? x : parent[x] = Find(parent, parent[x]);
 
         //Union function
         //Uses Find to find the roots of two rooms. If the rooms are already in the same room, then it returns false.
+        //Speed is O(1)
         private static bool Union(int[] parent, int x, int y)
         {
             int px = Find(parent, x), py = Find(parent, y);
@@ -563,6 +578,7 @@ namespace Generation
         // (BSP) Binary Space Partitioning
         // Essentially, what it does is it is used to split big rooms into smaller ones; maxDepth defines the amount of
         // "cuts" a room can undergo, so lower mD == bigger rooms and higher mD == smaller rooms.
+        //Speed is O(n), visits every node just once.
         private List<Room> Split(RectInt bounds, int depth)
         {
             var tooSmall = bounds.width  < minRoomSize * 2 + cellSize ||
@@ -601,11 +617,13 @@ namespace Generation
         }
 
         //Makes sure everything is aligned by rounding any integer to the nearest multiple of cellSize.
+        //Speed is O(1), its just a math expression
         private int SnapToGrid(int value) => Mathf.RoundToInt((float)value / cellSize) * cellSize;
 
         /// <summary>
         /// Debug view: Colours that show during generation.
         /// </summary>
+        //Speed is O(n)
         private void RefreshDebug()
         {
             DebugDrawingBatcher.GetInstance().ClearAllBatchedCalls();
